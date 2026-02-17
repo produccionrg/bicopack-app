@@ -3,6 +3,9 @@ import pandas as pd
 import uuid
 from datetime import datetime, date
 import os
+import json
+import gspread
+from google.oauth2.service_account import Credentials
 
 st.set_page_config(page_title="Bicopack – Registro", layout="centered")
 
@@ -12,12 +15,14 @@ TERMINADAS_PATH = os.path.join(BASE_PATH, "bobinas_terminadas.csv")
 EVENTOS_PATH = os.path.join(BASE_PATH, "eventos.csv")
 
 
+# --------------------
+# CSV helpers
+# --------------------
 def load_csv(path: str, columns: list[str]) -> pd.DataFrame:
     if os.path.exists(path):
         try:
             return pd.read_csv(path)
         except Exception:
-            # Si el CSV está vacío o corrupto, regeneramos estructura
             return pd.DataFrame(columns=columns)
     return pd.DataFrame(columns=columns)
 
@@ -26,6 +31,37 @@ def save_csv(df: pd.DataFrame, path: str) -> None:
     df.to_csv(path, index=False)
 
 
+# --------------------
+# Google Sheets helpers
+# --------------------
+def _gs_client():
+    sa_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT", "")
+    if not sa_json:
+        raise RuntimeError("Falta GOOGLE_SERVICE_ACCOUNT en Render (Environment).")
+
+    info = json.loads(sa_json)
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    creds = Credentials.from_service_account_info(info, scopes=scopes)
+    return gspread.authorize(creds)
+
+
+def gs_append_row(worksheet_name: str, row: list):
+    sheet_id = os.environ.get("GOOGLE_SHEET_ID", "")
+    if not sheet_id:
+        raise RuntimeError("Falta GOOGLE_SHEET_ID en Render (Environment).")
+
+    gc = _gs_client()
+    sh = gc.open_by_key(sheet_id)
+    ws = sh.worksheet(worksheet_name)
+    ws.append_row(row, value_input_option="USER_ENTERED")
+
+
+# --------------------
+# UI
+# --------------------
 st.title("Bicopack – Registro de producción")
 
 tabs = st.tabs(["Inicio de bobina", "Fin de bobina", "Tareas / Incidencias"])
@@ -75,8 +111,25 @@ with tabs[0]:
                     "hora_inicio": hora_inicio.strftime("%H:%M"),
                     "operario_inicio": operario_inicio,
                 }
+
                 df_en_curso = pd.concat([df_en_curso, pd.DataFrame([new_row])], ignore_index=True)
                 save_csv(df_en_curso, EN_CURSO_PATH)
+
+                # Enviar también a Google Sheets (EN_CURSO)
+                try:
+                    gs_append_row("EN_CURSO", [
+                        bobina_id,
+                        fecha.isoformat(),
+                        turno,
+                        int(maquina),
+                        lote_mp,
+                        lote_of,
+                        hora_inicio.strftime("%H:%M"),
+                        operario_inicio,
+                    ])
+                except Exception as e:
+                    st.warning(f"⚠️ Guardado local OK, pero no se pudo enviar a Google Sheets: {e}")
+
                 st.success("✅ Inicio registrado")
 
 
@@ -113,7 +166,8 @@ with tabs[1]:
                 value=datetime.now().time().replace(second=0, microsecond=0)
             )
             operario_fin = st.text_input("Operario que finaliza")
-            # Cambios solicitados:
+
+            # límites pedidos
             peso = st.number_input("Peso de la bobina (kg)", min_value=0.0, max_value=20.0, step=0.1)
             taras = st.number_input("Número de taras", min_value=0, max_value=20, step=1)
             observaciones = st.text_area("Observaciones")
@@ -150,8 +204,29 @@ with tabs[1]:
                         "taras": int(taras),
                         "observaciones": observaciones,
                     }
+
                     df_terminadas = pd.concat([df_terminadas, pd.DataFrame([new_row])], ignore_index=True)
                     save_csv(df_terminadas, TERMINADAS_PATH)
+
+                    # Enviar también a Google Sheets (BOBINAS)
+                    try:
+                        gs_append_row("BOBINAS", [
+                            fila["bobina_id"],
+                            fila["fecha"],
+                            fila["turno"],
+                            int(fila["maquina"]),
+                            fila["lote_materia_prima"],
+                            fila["lote_of"],
+                            fila["hora_inicio"],
+                            fila["operario_inicio"],
+                            hora_fin.strftime("%H:%M"),
+                            operario_fin,
+                            float(peso),
+                            int(taras),
+                            observaciones,
+                        ])
+                    except Exception as e:
+                        st.warning(f"⚠️ Guardado local OK, pero no se pudo enviar a Google Sheets: {e}")
 
                     # Quitar de en curso
                     df_en_curso = df_en_curso[df_en_curso["bobina_id"] != fila["bobina_id"]]
@@ -166,8 +241,10 @@ with tabs[1]:
 with tabs[2]:
     st.subheader("Registro de tareas / incidencias")
 
-    st.caption("Usa esta pestaña para anotar paradas, roturas, limpiezas, cambios de material/color, etc."
-               " Cada envío crea un registro independiente.")
+    st.caption(
+        "Usa esta pestaña para anotar paradas, roturas, limpiezas, cambios de material/color, etc. "
+        "Cada envío crea un registro independiente."
+    )
 
     with st.form("evento"):
         tipo = st.selectbox("Tipo", ["Incidencia", "Tarea/Limpieza"])
@@ -217,4 +294,21 @@ with tabs[2]:
 
                 df_eventos = pd.concat([df_eventos, pd.DataFrame([new_row])], ignore_index=True)
                 save_csv(df_eventos, EVENTOS_PATH)
+
+                # Enviar también a Google Sheets (EVENTOS)
+                try:
+                    gs_append_row("EVENTOS", [
+                        evento_id,
+                        tipo,
+                        fecha.isoformat(),
+                        int(maquina),
+                        hora_inicio.strftime("%H:%M"),
+                        hora_fin.strftime("%H:%M"),
+                        operario,
+                        motivo,
+                        metros_paro,
+                    ])
+                except Exception as e:
+                    st.warning(f"⚠️ Guardado local OK, pero no se pudo enviar a Google Sheets: {e}")
+
                 st.success("✅ Evento guardado")
