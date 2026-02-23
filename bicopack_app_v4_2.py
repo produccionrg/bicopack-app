@@ -209,20 +209,21 @@ with tabs[1]:
 
                     # Enviar también a Google Sheets (BOBINAS) - ORDEN SEGÚN TU SHEET
                     try:
-                        gs_append_row("BOBINAS", [
-                            fila["fecha"],
-                            fila["turno"],
-                            int(fila["maquina"]),
-                            fila["lote_materia_prima"],
-                            fila["lote_of"],
-                            fila["hora_inicio"],
-                            fila["operario_inicio"],
-                            hora_fin.strftime("%H:%M"),
-                            operario_fin,
-                            float(peso),
-                            int(taras),
-                            observaciones,
-                        ])
+                       gs_append_row("BOBINAS", [
+    fila["bobina_id"],                 # A
+    fila["fecha"],                     # B
+    fila["turno"],                     # C
+    int(fila["maquina"]),              # D
+    fila["lote_materia_prima"],        # E
+    fila["lote_of"],                   # F
+    fila["hora_inicio"],               # G
+    fila["operario_inicio"],           # H
+    hora_fin.strftime("%H:%M"),        # I
+    operario_fin,                      # J
+    float(peso),                       # K
+    int(taras),                        # L
+    observaciones,                     # M
+])
                     except Exception as e:
                         st.warning(f"⚠️ Guardado local OK, pero no se pudo enviar a Google Sheets: {e}")
 
