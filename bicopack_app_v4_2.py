@@ -37,7 +37,7 @@ def save_csv(df: pd.DataFrame, path: str) -> None:
 def _gs_client():
     sa_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT", "")
     if not sa_json:
-        raise RuntimeError("Falta GOOGLE_SERVICE_ACCOUNT en Render (Environment).")
+        raise RuntimeError("Falta GOOGLE_SERVICE_ACCOUNT en Render.")
 
     info = json.loads(sa_json)
     scopes = [
@@ -51,7 +51,7 @@ def _gs_client():
 def gs_append_row(worksheet_name: str, row: list):
     sheet_id = os.environ.get("GOOGLE_SHEET_ID", "")
     if not sheet_id:
-        raise RuntimeError("Falta GOOGLE_SHEET_ID en Render (Environment).")
+        raise RuntimeError("Falta GOOGLE_SHEET_ID en Render.")
 
     gc = _gs_client()
     sh = gc.open_by_key(sheet_id)
@@ -67,9 +67,9 @@ st.title("Bicopack – Registro de producción")
 tabs = st.tabs(["Inicio de bobina", "Fin de bobina", "Tareas / Incidencias"])
 
 
-# --------------------
+# =========================
 # INICIO DE BOBINA
-# --------------------
+# =========================
 with tabs[0]:
     st.subheader("Inicio de bobina")
 
@@ -88,8 +88,8 @@ with tabs[0]:
         guardar_inicio = st.form_submit_button("Guardar inicio")
 
         if guardar_inicio:
-            if (not lote_of) or (not lote_mp) or (not operario_inicio):
-                st.error("Faltan campos obligatorios (lote MP, lote OF, operario).")
+            if not lote_mp or not lote_of or not operario_inicio:
+                st.error("Faltan campos obligatorios.")
             else:
                 df_en_curso = load_csv(
                     EN_CURSO_PATH,
@@ -101,6 +101,7 @@ with tabs[0]:
                 )
 
                 bobina_id = str(uuid.uuid4())
+
                 new_row = {
                     "bobina_id": bobina_id,
                     "fecha": fecha.isoformat(),
@@ -115,7 +116,7 @@ with tabs[0]:
                 df_en_curso = pd.concat([df_en_curso, pd.DataFrame([new_row])], ignore_index=True)
                 save_csv(df_en_curso, EN_CURSO_PATH)
 
-                # Enviar también a Google Sheets (EN_CURSO)
+                # Google Sheets EN_CURSO
                 try:
                     gs_append_row("EN_CURSO", [
                         bobina_id,
@@ -128,14 +129,14 @@ with tabs[0]:
                         operario_inicio,
                     ])
                 except Exception as e:
-                    st.warning(f"⚠️ Guardado local OK, pero no se pudo enviar a Google Sheets: {e}")
+                    st.warning(f"No se pudo enviar a Google Sheets: {e}")
 
                 st.success("✅ Inicio registrado")
 
 
-# --------------------
+# =========================
 # FIN DE BOBINA
-# --------------------
+# =========================
 with tabs[1]:
     st.subheader("Fin de bobina")
 
@@ -153,161 +154,86 @@ with tabs[1]:
     else:
         opciones = df_en_curso.copy()
         opciones["label"] = opciones.apply(
-            lambda r: f"Máquina {r['maquina']} – OF {r['lote_of']} – inicio {r['hora_inicio']} (op: {r['operario_inicio']})",
+            lambda r: f"Máquina {r['maquina']} – OF {r['lote_of']} – inicio {r['hora_inicio']}",
             axis=1
         )
 
-        seleccion = st.selectbox("Selecciona la bobina a cerrar", opciones["label"].tolist())
+        seleccion = st.selectbox("Selecciona la bobina a cerrar", opciones["label"])
         fila = opciones[opciones["label"] == seleccion].iloc[0]
 
         with st.form("fin_bobina"):
-            hora_fin = st.time_input(
-                "Hora de fin",
-                value=datetime.now().time().replace(second=0, microsecond=0)
-            )
+            hora_fin = st.time_input("Hora de fin")
             operario_fin = st.text_input("Operario que finaliza")
-
-            peso = st.number_input("Peso de la bobina (kg)", min_value=0.0, max_value=20.0, step=0.1)
-            taras = st.number_input("Número de taras", min_value=0, max_value=20, step=1)
+            peso = st.number_input("Peso (kg)", min_value=0.0, step=0.1)
+            taras = st.number_input("Taras", min_value=0, step=1)
             observaciones = st.text_area("Observaciones")
 
             guardar_fin = st.form_submit_button("Guardar fin")
 
             if guardar_fin:
                 if not operario_fin:
-                    st.error("Debes indicar el operario que finaliza.")
+                    st.error("Debes indicar el operario.")
                 else:
-                    df_terminadas = load_csv(
-                        TERMINADAS_PATH,
-                        [
-                            "bobina_id", "fecha", "turno", "maquina",
-                            "lote_materia_prima", "lote_of",
-                            "hora_inicio", "operario_inicio",
-                            "hora_fin", "operario_fin",
-                            "peso", "taras", "observaciones"
-                        ]
-                    )
-
-                    new_row = {
-                        "bobina_id": fila["bobina_id"],
-                        "fecha": fila["fecha"],
-                        "turno": fila["turno"],
-                        "maquina": int(fila["maquina"]),
-                        "lote_materia_prima": fila["lote_materia_prima"],
-                        "lote_of": fila["lote_of"],
-                        "hora_inicio": fila["hora_inicio"],
-                        "operario_inicio": fila["operario_inicio"],
-                        "hora_fin": hora_fin.strftime("%H:%M"),
-                        "operario_fin": operario_fin,
-                        "peso": float(peso),
-                        "taras": int(taras),
-                        "observaciones": observaciones,
-                    }
-
-                    df_terminadas = pd.concat([df_terminadas, pd.DataFrame([new_row])], ignore_index=True)
-                    save_csv(df_terminadas, TERMINADAS_PATH)
-
-                    # Enviar también a Google Sheets (BOBINAS) - ORDEN SEGÚN TU SHEET
+                    # Google Sheets BOBINAS (SIN bobina_id)
                     try:
-                       gs_append_row("BOBINAS", [
-    fila["bobina_id"],                 # A
-    fila["fecha"],                     # B
-    fila["turno"],                     # C
-    int(fila["maquina"]),              # D
-    fila["lote_materia_prima"],        # E
-    fila["lote_of"],                   # F
-    fila["hora_inicio"],               # G
-    fila["operario_inicio"],           # H
-    hora_fin.strftime("%H:%M"),        # I
-    operario_fin,                      # J
-    float(peso),                       # K
-    int(taras),                        # L
-    observaciones,                     # M
-])
+                        gs_append_row("BOBINAS", [
+                            fila["fecha"],
+                            fila["turno"],
+                            int(fila["maquina"]),
+                            fila["lote_materia_prima"],
+                            fila["lote_of"],
+                            fila["hora_inicio"],
+                            fila["operario_inicio"],
+                            hora_fin.strftime("%H:%M"),
+                            operario_fin,
+                            float(peso),
+                            int(taras),
+                            observaciones,
+                        ])
                     except Exception as e:
-                        st.warning(f"⚠️ Guardado local OK, pero no se pudo enviar a Google Sheets: {e}")
+                        st.warning(f"No se pudo enviar a Google Sheets: {e}")
 
-                    # Quitar de en curso
+                    # Eliminar de EN_CURSO
                     df_en_curso = df_en_curso[df_en_curso["bobina_id"] != fila["bobina_id"]]
                     save_csv(df_en_curso, EN_CURSO_PATH)
 
                     st.success("✅ Bobina cerrada")
 
 
-# --------------------
-# TAREAS / INCIDENCIAS
-# --------------------
+# =========================
+# EVENTOS
+# =========================
 with tabs[2]:
     st.subheader("Registro de tareas / incidencias")
 
-    st.caption(
-        "Usa esta pestaña para anotar paradas, roturas, limpiezas, cambios de material/color, etc. "
-        "Cada envío crea un registro independiente."
-    )
-
     with st.form("evento"):
         tipo = st.selectbox("Tipo", ["Incidencia", "Tarea/Limpieza"])
-        fecha = st.date_input("Fecha del evento", value=date.today(), key="ev_fecha")
-        maquina = st.number_input("Número de máquina", min_value=1, step=1, key="ev_maquina")
-        hora_inicio = st.time_input(
-            "Hora inicio",
-            value=datetime.now().time().replace(second=0, microsecond=0),
-            key="ev_hini"
-        )
-        hora_fin = st.time_input(
-            "Hora fin",
-            value=datetime.now().time().replace(second=0, microsecond=0),
-            key="ev_hfin"
-        )
-        operario = st.text_input("Operario", key="ev_op")
-        motivo = st.text_area("Descripción / motivo", key="ev_desc")
-        metros_paro = st.text_input("Metro en el que se para (opcional)", key="ev_m")
+        fecha = st.date_input("Fecha", value=date.today())
+        maquina = st.number_input("Máquina", min_value=1, step=1)
+        hora_inicio = st.time_input("Hora inicio")
+        hora_fin = st.time_input("Hora fin")
+        operario = st.text_input("Operario")
+        motivo = st.text_area("Descripción")
 
         guardar_evento = st.form_submit_button("Guardar evento")
 
         if guardar_evento:
             if not operario or not motivo:
-                st.error("Faltan campos obligatorios (operario y descripción).")
+                st.error("Faltan campos obligatorios.")
             else:
-                df_eventos = load_csv(
-                    EVENTOS_PATH,
-                    [
-                        "evento_id", "tipo", "fecha", "maquina",
-                        "hora_inicio", "hora_fin", "operario",
-                        "descripcion", "metro_paro"
-                    ]
-                )
-
-                evento_id = str(uuid.uuid4())
-                new_row = {
-                    "evento_id": evento_id,
-                    "tipo": tipo,
-                    "fecha": fecha.isoformat(),
-                    "maquina": int(maquina),
-                    "hora_inicio": hora_inicio.strftime("%H:%M"),
-                    "hora_fin": hora_fin.strftime("%H:%M"),
-                    "operario": operario,
-                    "descripcion": motivo,
-                    "metro_paro": metros_paro,
-                }
-
-                df_eventos = pd.concat([df_eventos, pd.DataFrame([new_row])], ignore_index=True)
-                save_csv(df_eventos, EVENTOS_PATH)
-
-                # Calcular minutos (si la hora_fin es menor, asumimos que cruza medianoche)
                 start_dt = datetime.combine(date.today(), hora_inicio)
                 end_dt = datetime.combine(date.today(), hora_fin)
                 if end_dt < start_dt:
                     end_dt = end_dt.replace(day=end_dt.day + 1)
+
                 minutos = int((end_dt - start_dt).total_seconds() / 60)
 
-                # Enviar también a Google Sheets (EVENTOS) - ORDEN SEGÚN TU SHEET
                 try:
                     gs_append_row("EVENTOS", [
                         fecha.isoformat(),
-                        "",          # turno (no se pide en este formulario)
+                        "",
                         int(maquina),
-                        "",          # lote_of (no se pide en este formulario)
+                        "",
                         tipo,
                         hora_inicio.strftime("%H:%M"),
                         hora_fin.strftime("%H:%M"),
@@ -316,6 +242,6 @@ with tabs[2]:
                         motivo,
                     ])
                 except Exception as e:
-                    st.warning(f"⚠️ Guardado local OK, pero no se pudo enviar a Google Sheets: {e}")
+                    st.warning(f"No se pudo enviar a Google Sheets: {e}")
 
                 st.success("✅ Evento guardado")
