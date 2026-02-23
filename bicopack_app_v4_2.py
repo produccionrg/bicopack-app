@@ -167,7 +167,6 @@ with tabs[1]:
             )
             operario_fin = st.text_input("Operario que finaliza")
 
-            # límites pedidos
             peso = st.number_input("Peso de la bobina (kg)", min_value=0.0, max_value=20.0, step=0.1)
             taras = st.number_input("Número de taras", min_value=0, max_value=20, step=1)
             observaciones = st.text_area("Observaciones")
@@ -208,10 +207,9 @@ with tabs[1]:
                     df_terminadas = pd.concat([df_terminadas, pd.DataFrame([new_row])], ignore_index=True)
                     save_csv(df_terminadas, TERMINADAS_PATH)
 
-                    # Enviar también a Google Sheets (BOBINAS)
+                    # Enviar también a Google Sheets (BOBINAS) - ORDEN SEGÚN TU SHEET
                     try:
                         gs_append_row("BOBINAS", [
-                            fila["bobina_id"],
                             fila["fecha"],
                             fila["turno"],
                             int(fila["maquina"]),
@@ -295,18 +293,26 @@ with tabs[2]:
                 df_eventos = pd.concat([df_eventos, pd.DataFrame([new_row])], ignore_index=True)
                 save_csv(df_eventos, EVENTOS_PATH)
 
-                # Enviar también a Google Sheets (EVENTOS)
+                # Calcular minutos (si la hora_fin es menor, asumimos que cruza medianoche)
+                start_dt = datetime.combine(date.today(), hora_inicio)
+                end_dt = datetime.combine(date.today(), hora_fin)
+                if end_dt < start_dt:
+                    end_dt = end_dt.replace(day=end_dt.day + 1)
+                minutos = int((end_dt - start_dt).total_seconds() / 60)
+
+                # Enviar también a Google Sheets (EVENTOS) - ORDEN SEGÚN TU SHEET
                 try:
                     gs_append_row("EVENTOS", [
-                        evento_id,
-                        tipo,
                         fecha.isoformat(),
+                        "",          # turno (no se pide en este formulario)
                         int(maquina),
+                        "",          # lote_of (no se pide en este formulario)
+                        tipo,
                         hora_inicio.strftime("%H:%M"),
                         hora_fin.strftime("%H:%M"),
+                        minutos,
                         operario,
                         motivo,
-                        metros_paro,
                     ])
                 except Exception as e:
                     st.warning(f"⚠️ Guardado local OK, pero no se pudo enviar a Google Sheets: {e}")
