@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import uuid
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import os
 import json
 import gspread
@@ -11,7 +11,6 @@ st.set_page_config(page_title="Bicopack – Registro", layout="centered")
 
 BASE_PATH = os.path.dirname(os.path.abspath(__file__))
 EN_CURSO_PATH = os.path.join(BASE_PATH, "bobinas_en_curso.csv")
-TERMINADAS_PATH = os.path.join(BASE_PATH, "bobinas_terminadas.csv")
 EVENTOS_PATH = os.path.join(BASE_PATH, "eventos.csv")
 
 
@@ -80,10 +79,14 @@ with tabs[0]:
         lote_mp = st.text_input("Lote de materia prima")
         lote_of = st.text_input("Lote de orden de fabricación (OF)")
         operario_inicio = st.text_input("Nombre del operario")
+
         hora_inicio = st.time_input(
             "Hora de inicio",
-            value=datetime.now().time().replace(second=0, microsecond=0)
+            value=datetime.now().time().replace(second=0, microsecond=0),
+            step=60
         )
+
+        observaciones_inicio = st.text_area("Observaciones inicio")
 
         guardar_inicio = st.form_submit_button("Guardar inicio")
 
@@ -96,7 +99,8 @@ with tabs[0]:
                     [
                         "bobina_id", "fecha", "turno", "maquina",
                         "lote_materia_prima", "lote_of",
-                        "hora_inicio", "operario_inicio"
+                        "hora_inicio", "operario_inicio",
+                        "observaciones_inicio"
                     ]
                 )
 
@@ -111,23 +115,14 @@ with tabs[0]:
                     "lote_of": lote_of,
                     "hora_inicio": hora_inicio.strftime("%H:%M"),
                     "operario_inicio": operario_inicio,
+                    "observaciones_inicio": observaciones_inicio
                 }
 
                 df_en_curso = pd.concat([df_en_curso, pd.DataFrame([new_row])], ignore_index=True)
                 save_csv(df_en_curso, EN_CURSO_PATH)
 
-                # Google Sheets EN_CURSO
                 try:
-                    gs_append_row("EN_CURSO", [
-                        bobina_id,
-                        fecha.isoformat(),
-                        turno,
-                        int(maquina),
-                        lote_mp,
-                        lote_of,
-                        hora_inicio.strftime("%H:%M"),
-                        operario_inicio,
-                    ])
+                    gs_append_row("EN_CURSO", list(new_row.values()))
                 except Exception as e:
                     st.warning(f"No se pudo enviar a Google Sheets: {e}")
 
@@ -145,7 +140,8 @@ with tabs[1]:
         [
             "bobina_id", "fecha", "turno", "maquina",
             "lote_materia_prima", "lote_of",
-            "hora_inicio", "operario_inicio"
+            "hora_inicio", "operario_inicio",
+            "observaciones_inicio"
         ]
     )
 
@@ -162,7 +158,7 @@ with tabs[1]:
         fila = opciones[opciones["label"] == seleccion].iloc[0]
 
         with st.form("fin_bobina"):
-            hora_fin = st.time_input("Hora de fin")
+            hora_fin = st.time_input("Hora de fin", step=60)
             operario_fin = st.text_input("Operario que finaliza")
             peso = st.number_input("Peso (kg)", min_value=0.0, step=0.1)
             taras = st.number_input("Taras", min_value=0, step=1)
@@ -174,7 +170,6 @@ with tabs[1]:
                 if not operario_fin:
                     st.error("Debes indicar el operario.")
                 else:
-                    # Google Sheets BOBINAS (SIN bobina_id)
                     try:
                         gs_append_row("BOBINAS", [
                             fila["fecha"],
@@ -193,7 +188,6 @@ with tabs[1]:
                     except Exception as e:
                         st.warning(f"No se pudo enviar a Google Sheets: {e}")
 
-                    # Eliminar de EN_CURSO
                     df_en_curso = df_en_curso[df_en_curso["bobina_id"] != fila["bobina_id"]]
                     save_csv(df_en_curso, EN_CURSO_PATH)
 
@@ -206,12 +200,31 @@ with tabs[1]:
 with tabs[2]:
     st.subheader("Registro de tareas / incidencias")
 
+    df_en_curso = load_csv(
+        EN_CURSO_PATH,
+        [
+            "bobina_id", "fecha", "turno", "maquina",
+            "lote_materia_prima", "lote_of",
+            "hora_inicio", "operario_inicio",
+            "observaciones_inicio"
+        ]
+    )
+
+    df_eventos = load_csv(
+        EVENTOS_PATH,
+        [
+            "fecha", "turno", "maquina", "lote_of",
+            "tipo", "hora_inicio", "hora_fin",
+            "minutos", "operario", "descripcion"
+        ]
+    )
+
     with st.form("evento"):
         tipo = st.selectbox("Tipo", ["Incidencia", "Tarea/Limpieza"])
         fecha = st.date_input("Fecha", value=date.today())
         maquina = st.number_input("Máquina", min_value=1, step=1)
-        hora_inicio = st.time_input("Hora inicio")
-        hora_fin = st.time_input("Hora fin")
+        hora_inicio = st.time_input("Hora inicio", step=60)
+        hora_fin = st.time_input("Hora fin", step=60)
         operario = st.text_input("Operario")
         motivo = st.text_area("Descripción")
 
@@ -221,26 +234,46 @@ with tabs[2]:
             if not operario or not motivo:
                 st.error("Faltan campos obligatorios.")
             else:
-                start_dt = datetime.combine(date.today(), hora_inicio)
-                end_dt = datetime.combine(date.today(), hora_fin)
+                bobina_activa = df_en_curso[df_en_curso["maquina"] == int(maquina)]
+
+                turno = ""
+                lote_of = ""
+
+                if not bobina_activa.empty:
+                    turno = bobina_activa.iloc[0]["turno"]
+                    lote_of = bobina_activa.iloc[0]["lote_of"]
+                elif tipo == "Incidencia":
+                    st.error("⚠️ No hay OF activa en esta máquina.")
+                    st.stop()
+
+                start_dt = datetime.combine(fecha, hora_inicio)
+                end_dt = datetime.combine(fecha, hora_fin)
+
                 if end_dt < start_dt:
-                    end_dt = end_dt.replace(day=end_dt.day + 1)
+                    end_dt = end_dt + timedelta(days=1)
 
                 minutos = int((end_dt - start_dt).total_seconds() / 60)
 
+                new_event = {
+                    "fecha": fecha.isoformat(),
+                    "turno": turno,
+                    "maquina": int(maquina),
+                    "lote_of": lote_of,
+                    "tipo": tipo,
+                    "hora_inicio": hora_inicio.strftime("%H:%M"),
+                    "hora_fin": hora_fin.strftime("%H:%M"),
+                    "minutos": minutos,
+                    "operario": operario,
+                    "descripcion": motivo,
+                }
+
+                # Guardar CSV backup
+                df_eventos = pd.concat([df_eventos, pd.DataFrame([new_event])], ignore_index=True)
+                save_csv(df_eventos, EVENTOS_PATH)
+
+                # Guardar en Google Sheets
                 try:
-                    gs_append_row("EVENTOS", [
-                        fecha.isoformat(),
-                        "",
-                        int(maquina),
-                        "",
-                        tipo,
-                        hora_inicio.strftime("%H:%M"),
-                        hora_fin.strftime("%H:%M"),
-                        minutos,
-                        operario,
-                        motivo,
-                    ])
+                    gs_append_row("EVENTOS", list(new_event.values()))
                 except Exception as e:
                     st.warning(f"No se pudo enviar a Google Sheets: {e}")
 
