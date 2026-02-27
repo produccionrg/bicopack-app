@@ -94,35 +94,38 @@ with tabs[0]:
             if not lote_mp or not lote_of or not operario_inicio:
                 st.error("Faltan campos obligatorios.")
             else:
-                df_en_curso = load_csv(
-                    EN_CURSO_PATH,
-                    [
-                        "bobina_id", "fecha", "turno", "maquina",
-                        "lote_materia_prima", "lote_of",
-                        "hora_inicio", "operario_inicio",
-                        "observaciones_inicio"
-                    ]
-                )
+                columnas_en_curso = [
+                    "bobina_id", "fecha", "turno", "maquina",
+                    "lote_materia_prima", "lote_of",
+                    "hora_inicio", "operario_inicio",
+                    "observaciones_inicio"
+                ]
+
+                df_en_curso = load_csv(EN_CURSO_PATH, columnas_en_curso)
 
                 bobina_id = str(uuid.uuid4())
 
-                new_row = {
-                    "bobina_id": bobina_id,
-                    "fecha": fecha.isoformat(),
-                    "turno": turno,
-                    "maquina": int(maquina),
-                    "lote_materia_prima": lote_mp,
-                    "lote_of": lote_of,
-                    "hora_inicio": hora_inicio.strftime("%H:%M"),
-                    "operario_inicio": operario_inicio,
-                    "observaciones_inicio": observaciones_inicio
-                }
+                new_row = [
+                    bobina_id,
+                    fecha.isoformat(),
+                    turno,
+                    int(maquina),
+                    lote_mp,
+                    lote_of,
+                    hora_inicio.strftime("%H:%M"),
+                    operario_inicio,
+                    observaciones_inicio
+                ]
 
-                df_en_curso = pd.concat([df_en_curso, pd.DataFrame([new_row])], ignore_index=True)
+                df_en_curso = pd.concat(
+                    [df_en_curso, pd.DataFrame([new_row], columns=columnas_en_curso)],
+                    ignore_index=True
+                )
+
                 save_csv(df_en_curso, EN_CURSO_PATH)
 
                 try:
-                    gs_append_row("EN_CURSO", list(new_row.values()))
+                    gs_append_row("EN_CURSO", new_row)
                 except Exception as e:
                     st.warning(f"No se pudo enviar a Google Sheets: {e}")
 
@@ -135,15 +138,14 @@ with tabs[0]:
 with tabs[1]:
     st.subheader("Fin de bobina")
 
-    df_en_curso = load_csv(
-        EN_CURSO_PATH,
-        [
-            "bobina_id", "fecha", "turno", "maquina",
-            "lote_materia_prima", "lote_of",
-            "hora_inicio", "operario_inicio",
-            "observaciones_inicio"
-        ]
-    )
+    columnas_en_curso = [
+        "bobina_id", "fecha", "turno", "maquina",
+        "lote_materia_prima", "lote_of",
+        "hora_inicio", "operario_inicio",
+        "observaciones_inicio"
+    ]
+
+    df_en_curso = load_csv(EN_CURSO_PATH, columnas_en_curso)
 
     if df_en_curso.empty:
         st.info("No hay bobinas en curso.")
@@ -162,7 +164,7 @@ with tabs[1]:
             operario_fin = st.text_input("Operario que finaliza")
             peso = st.number_input("Peso (kg)", min_value=0.0, step=0.1)
             taras = st.number_input("Taras", min_value=0, step=1)
-            observaciones = st.text_area("Observaciones")
+            observaciones_fin = st.text_area("Observaciones fin")
 
             guardar_fin = st.form_submit_button("Guardar fin")
 
@@ -170,21 +172,23 @@ with tabs[1]:
                 if not operario_fin:
                     st.error("Debes indicar el operario.")
                 else:
+                    fila_bobinas = [
+                        fila["fecha"],
+                        fila["turno"],
+                        int(fila["maquina"]),
+                        fila["lote_materia_prima"],
+                        fila["lote_of"],
+                        fila["hora_inicio"],
+                        fila["operario_inicio"],
+                        hora_fin.strftime("%H:%M"),
+                        operario_fin,
+                        float(peso),
+                        int(taras),
+                        observaciones_fin
+                    ]
+
                     try:
-                        gs_append_row("BOBINAS", [
-                            fila["fecha"],
-                            fila["turno"],
-                            int(fila["maquina"]),
-                            fila["lote_materia_prima"],
-                            fila["lote_of"],
-                            fila["hora_inicio"],
-                            fila["operario_inicio"],
-                            hora_fin.strftime("%H:%M"),
-                            operario_fin,
-                            float(peso),
-                            int(taras),
-                            observaciones,
-                        ])
+                        gs_append_row("BOBINAS", fila_bobinas)
                     except Exception as e:
                         st.warning(f"No se pudo enviar a Google Sheets: {e}")
 
@@ -200,24 +204,15 @@ with tabs[1]:
 with tabs[2]:
     st.subheader("Registro de tareas / incidencias")
 
-    df_en_curso = load_csv(
-        EN_CURSO_PATH,
-        [
-            "bobina_id", "fecha", "turno", "maquina",
-            "lote_materia_prima", "lote_of",
-            "hora_inicio", "operario_inicio",
-            "observaciones_inicio"
-        ]
-    )
+    columnas_eventos = [
+        "fecha", "turno", "maquina", "lote_of",
+        "tipo", "hora_inicio", "hora_fin",
+        "minutos", "operario", "descripcion"
+    ]
 
-    df_eventos = load_csv(
-        EVENTOS_PATH,
-        [
-            "fecha", "turno", "maquina", "lote_of",
-            "tipo", "hora_inicio", "hora_fin",
-            "minutos", "operario", "descripcion"
-        ]
-    )
+    df_eventos = load_csv(EVENTOS_PATH, columnas_eventos)
+
+    df_en_curso = load_csv(EN_CURSO_PATH, columnas_en_curso)
 
     with st.form("evento"):
         tipo = st.selectbox("Tipo", ["Incidencia", "Tarea/Limpieza"])
@@ -226,12 +221,12 @@ with tabs[2]:
         hora_inicio = st.time_input("Hora inicio", step=60)
         hora_fin = st.time_input("Hora fin", step=60)
         operario = st.text_input("Operario")
-        motivo = st.text_area("Descripción")
+        descripcion = st.text_area("Descripción")
 
         guardar_evento = st.form_submit_button("Guardar evento")
 
         if guardar_evento:
-            if not operario or not motivo:
+            if not operario or not descripcion:
                 st.error("Faltan campos obligatorios.")
             else:
                 bobina_activa = df_en_curso[df_en_curso["maquina"] == int(maquina)]
@@ -254,26 +249,28 @@ with tabs[2]:
 
                 minutos = int((end_dt - start_dt).total_seconds() / 60)
 
-                new_event = {
-                    "fecha": fecha.isoformat(),
-                    "turno": turno,
-                    "maquina": int(maquina),
-                    "lote_of": lote_of,
-                    "tipo": tipo,
-                    "hora_inicio": hora_inicio.strftime("%H:%M"),
-                    "hora_fin": hora_fin.strftime("%H:%M"),
-                    "minutos": minutos,
-                    "operario": operario,
-                    "descripcion": motivo,
-                }
+                new_event = [
+                    fecha.isoformat(),
+                    turno,
+                    int(maquina),
+                    lote_of,
+                    tipo,
+                    hora_inicio.strftime("%H:%M"),
+                    hora_fin.strftime("%H:%M"),
+                    minutos,
+                    operario,
+                    descripcion
+                ]
 
-                # Guardar CSV backup
-                df_eventos = pd.concat([df_eventos, pd.DataFrame([new_event])], ignore_index=True)
+                df_eventos = pd.concat(
+                    [df_eventos, pd.DataFrame([new_event], columns=columnas_eventos)],
+                    ignore_index=True
+                )
+
                 save_csv(df_eventos, EVENTOS_PATH)
 
-                # Guardar en Google Sheets
                 try:
-                    gs_append_row("EVENTOS", list(new_event.values()))
+                    gs_append_row("EVENTOS", new_event)
                 except Exception as e:
                     st.warning(f"No se pudo enviar a Google Sheets: {e}")
 
