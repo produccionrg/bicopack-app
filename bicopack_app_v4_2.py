@@ -58,6 +58,16 @@ def gs_append_row(worksheet_name: str, row: list):
     ws.append_row(row, value_input_option="USER_ENTERED")
 
 
+# 🔵 NUEVO: Leer hoja completa desde Google Sheets
+def gs_get_all(worksheet_name: str) -> pd.DataFrame:
+    sheet_id = os.environ.get("GOOGLE_SHEET_ID", "")
+    gc = _gs_client()
+    sh = gc.open_by_key(sheet_id)
+    ws = sh.worksheet(worksheet_name)
+    data = ws.get_all_records()
+    return pd.DataFrame(data)
+
+
 # --------------------
 # UI
 # --------------------
@@ -101,8 +111,6 @@ with tabs[0]:
                     "observaciones_inicio"
                 ]
 
-                df_en_curso = load_csv(EN_CURSO_PATH, columnas_en_curso)
-
                 bobina_id = str(uuid.uuid4())
 
                 new_row = [
@@ -117,17 +125,19 @@ with tabs[0]:
                     observaciones_inicio
                 ]
 
-                df_en_curso = pd.concat(
-                    [df_en_curso, pd.DataFrame([new_row], columns=columnas_en_curso)],
-                    ignore_index=True
-                )
-
-                save_csv(df_en_curso, EN_CURSO_PATH)
-
+                # Guardar en Google
                 try:
                     gs_append_row("EN_CURSO", new_row)
                 except Exception as e:
                     st.warning(f"No se pudo enviar a Google Sheets: {e}")
+
+                # Guardar en CSV backup
+                df_backup = load_csv(EN_CURSO_PATH, columnas_en_curso)
+                df_backup = pd.concat(
+                    [df_backup, pd.DataFrame([new_row], columns=columnas_en_curso)],
+                    ignore_index=True
+                )
+                save_csv(df_backup, EN_CURSO_PATH)
 
                 st.success("✅ Inicio registrado")
 
@@ -145,7 +155,11 @@ with tabs[1]:
         "observaciones_inicio"
     ]
 
-    df_en_curso = load_csv(EN_CURSO_PATH, columnas_en_curso)
+    # 🔵 LEEMOS DESDE GOOGLE SHEETS (SOLUCIÓN DEFINITIVA)
+    try:
+        df_en_curso = gs_get_all("EN_CURSO")
+    except Exception:
+        df_en_curso = pd.DataFrame(columns=columnas_en_curso)
 
     if df_en_curso.empty:
         st.info("No hay bobinas en curso.")
@@ -192,9 +206,6 @@ with tabs[1]:
                     except Exception as e:
                         st.warning(f"No se pudo enviar a Google Sheets: {e}")
 
-                    df_en_curso = df_en_curso[df_en_curso["bobina_id"] != fila["bobina_id"]]
-                    save_csv(df_en_curso, EN_CURSO_PATH)
-
                     st.success("✅ Bobina cerrada")
 
 
@@ -211,7 +222,11 @@ with tabs[2]:
     ]
 
     df_eventos = load_csv(EVENTOS_PATH, columnas_eventos)
-    df_en_curso = load_csv(EN_CURSO_PATH, columnas_en_curso)
+
+    try:
+        df_en_curso = gs_get_all("EN_CURSO")
+    except Exception:
+        df_en_curso = pd.DataFrame()
 
     with st.form("evento"):
         tipo = st.selectbox("Tipo", ["Incidencia", "Tarea/Limpieza"])
@@ -244,7 +259,7 @@ with tabs[2]:
                 end_dt = datetime.combine(fecha, hora_fin)
 
                 if end_dt < start_dt:
-                    end_dt = end_dt + timedelta(days=1)
+                    end_dt += timedelta(days=1)
 
                 minutos = int((end_dt - start_dt).total_seconds() // 60)
 
@@ -260,13 +275,6 @@ with tabs[2]:
                     str(operario),
                     str(descripcion)
                 ]
-
-                df_eventos = pd.concat(
-                    [df_eventos, pd.DataFrame([new_event], columns=columnas_eventos)],
-                    ignore_index=True
-                )
-
-                save_csv(df_eventos, EVENTOS_PATH)
 
                 try:
                     gs_append_row("EVENTOS", new_event)
