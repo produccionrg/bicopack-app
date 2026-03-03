@@ -211,7 +211,6 @@ with tabs[2]:
     ]
 
     df_eventos = load_csv(EVENTOS_PATH, columnas_eventos)
-
     df_en_curso = load_csv(EN_CURSO_PATH, columnas_en_curso)
 
     with st.form("evento"):
@@ -247,19 +246,19 @@ with tabs[2]:
                 if end_dt < start_dt:
                     end_dt = end_dt + timedelta(days=1)
 
-                minutos = int((end_dt - start_dt).total_seconds() / 60)
+                minutos = int((end_dt - start_dt).total_seconds() // 60)
 
                 new_event = [
                     fecha.isoformat(),
-                    turno,
+                    str(turno),
                     int(maquina),
-                    lote_of,
-                    tipo,
+                    str(lote_of),
+                    str(tipo),
                     hora_inicio.strftime("%H:%M"),
                     hora_fin.strftime("%H:%M"),
-                    minutos,
-                    operario,
-                    descripcion
+                    int(minutos),
+                    str(operario),
+                    str(descripcion)
                 ]
 
                 df_eventos = pd.concat(
