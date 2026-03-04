@@ -49,16 +49,12 @@ def _gs_client():
 
 def gs_append_row(worksheet_name: str, row: list):
     sheet_id = os.environ.get("GOOGLE_SHEET_ID", "")
-    if not sheet_id:
-        raise RuntimeError("Falta GOOGLE_SHEET_ID en Render.")
-
     gc = _gs_client()
     sh = gc.open_by_key(sheet_id)
     ws = sh.worksheet(worksheet_name)
     ws.append_row(row, value_input_option="USER_ENTERED")
 
 
-# 🔵 NUEVO: Leer hoja completa desde Google Sheets
 def gs_get_all(worksheet_name: str) -> pd.DataFrame:
     sheet_id = os.environ.get("GOOGLE_SHEET_ID", "")
     gc = _gs_client()
@@ -66,6 +62,20 @@ def gs_get_all(worksheet_name: str) -> pd.DataFrame:
     ws = sh.worksheet(worksheet_name)
     data = ws.get_all_records()
     return pd.DataFrame(data)
+
+
+def gs_delete_row_by_bobina(bobina_id):
+    sheet_id = os.environ.get("GOOGLE_SHEET_ID", "")
+    gc = _gs_client()
+    sh = gc.open_by_key(sheet_id)
+    ws = sh.worksheet("EN_CURSO")
+
+    data = ws.get_all_values()
+
+    for i, row in enumerate(data):
+        if row and row[0] == bobina_id:
+            ws.delete_rows(i + 1)
+            break
 
 
 # --------------------
@@ -104,10 +114,11 @@ with tabs[0]:
             if not lote_mp or not lote_of or not operario_inicio:
                 st.error("Faltan campos obligatorios.")
             else:
+
                 columnas_en_curso = [
-                    "bobina_id", "fecha", "turno", "maquina",
-                    "lote_materia_prima", "lote_of",
-                    "hora_inicio", "operario_inicio",
+                    "bobina_id","fecha","turno","maquina",
+                    "lote_materia_prima","lote_of",
+                    "hora_inicio","operario_inicio",
                     "observaciones_inicio"
                 ]
 
@@ -125,13 +136,13 @@ with tabs[0]:
                     observaciones_inicio
                 ]
 
-                # Guardar en Google
+                # guardar en Google
                 try:
                     gs_append_row("EN_CURSO", new_row)
                 except Exception as e:
                     st.warning(f"No se pudo enviar a Google Sheets: {e}")
 
-                # Guardar en CSV backup
+                # backup CSV
                 df_backup = load_csv(EN_CURSO_PATH, columnas_en_curso)
                 df_backup = pd.concat(
                     [df_backup, pd.DataFrame([new_row], columns=columnas_en_curso)],
@@ -149,13 +160,12 @@ with tabs[1]:
     st.subheader("Fin de bobina")
 
     columnas_en_curso = [
-        "bobina_id", "fecha", "turno", "maquina",
-        "lote_materia_prima", "lote_of",
-        "hora_inicio", "operario_inicio",
+        "bobina_id","fecha","turno","maquina",
+        "lote_materia_prima","lote_of",
+        "hora_inicio","operario_inicio",
         "observaciones_inicio"
     ]
 
-    # 🔵 LEEMOS DESDE GOOGLE SHEETS (SOLUCIÓN DEFINITIVA)
     try:
         df_en_curso = gs_get_all("EN_CURSO")
     except Exception:
@@ -164,13 +174,16 @@ with tabs[1]:
     if df_en_curso.empty:
         st.info("No hay bobinas en curso.")
     else:
+
         opciones = df_en_curso.copy()
+
         opciones["label"] = opciones.apply(
             lambda r: f"Máquina {r['maquina']} – OF {r['lote_of']} – inicio {r['hora_inicio']}",
             axis=1
         )
 
         seleccion = st.selectbox("Selecciona la bobina a cerrar", opciones["label"])
+
         fila = opciones[opciones["label"] == seleccion].iloc[0]
 
         with st.form("fin_bobina"):
@@ -183,26 +196,35 @@ with tabs[1]:
             guardar_fin = st.form_submit_button("Guardar fin")
 
             if guardar_fin:
+
                 if not operario_fin:
                     st.error("Debes indicar el operario.")
+
                 else:
+
                     fila_bobinas = [
-                        fila["fecha"],
-                        fila["turno"],
+                        str(fila["fecha"]),
+                        str(fila["turno"]),
                         int(fila["maquina"]),
-                        fila["lote_materia_prima"],
-                        fila["lote_of"],
-                        fila["hora_inicio"],
-                        fila["operario_inicio"],
+                        str(fila["lote_materia_prima"]),
+                        str(fila["lote_of"]),
+                        str(fila["hora_inicio"]),
+                        str(fila["operario_inicio"]),
                         hora_fin.strftime("%H:%M"),
-                        operario_fin,
+                        str(operario_fin),
                         float(peso),
                         int(taras),
-                        observaciones_fin
+                        str(observaciones_fin)
                     ]
+
+                    fila_bobinas = [None if pd.isna(x) else x for x in fila_bobinas]
 
                     try:
                         gs_append_row("BOBINAS", fila_bobinas)
+
+                        # eliminar de EN_CURSO en Google
+                        gs_delete_row_by_bobina(fila["bobina_id"])
+
                     except Exception as e:
                         st.warning(f"No se pudo enviar a Google Sheets: {e}")
 
@@ -216,9 +238,9 @@ with tabs[2]:
     st.subheader("Registro de tareas / incidencias")
 
     columnas_eventos = [
-        "fecha", "turno", "maquina", "lote_of",
-        "tipo", "hora_inicio", "hora_fin",
-        "minutos", "operario", "descripcion"
+        "fecha","turno","maquina","lote_of",
+        "tipo","hora_inicio","hora_fin",
+        "minutos","operario","descripcion"
     ]
 
     df_eventos = load_csv(EVENTOS_PATH, columnas_eventos)
@@ -229,7 +251,7 @@ with tabs[2]:
         df_en_curso = pd.DataFrame()
 
     with st.form("evento"):
-        tipo = st.selectbox("Tipo", ["Incidencia", "Tarea/Limpieza"])
+        tipo = st.selectbox("Tipo", ["Incidencia","Tarea/Limpieza"])
         fecha = st.date_input("Fecha", value=date.today())
         maquina = st.number_input("Máquina", min_value=1, step=1)
         hora_inicio = st.time_input("Hora inicio", step=60)
@@ -240,9 +262,12 @@ with tabs[2]:
         guardar_evento = st.form_submit_button("Guardar evento")
 
         if guardar_evento:
+
             if not operario or not descripcion:
                 st.error("Faltan campos obligatorios.")
+
             else:
+
                 bobina_activa = df_en_curso[df_en_curso["maquina"] == int(maquina)]
 
                 turno = ""
@@ -251,6 +276,7 @@ with tabs[2]:
                 if not bobina_activa.empty:
                     turno = bobina_activa.iloc[0]["turno"]
                     lote_of = bobina_activa.iloc[0]["lote_of"]
+
                 elif tipo == "Incidencia":
                     st.error("⚠️ No hay OF activa en esta máquina.")
                     st.stop()
