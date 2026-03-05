@@ -7,6 +7,7 @@ import json
 import gspread
 from google.oauth2.service_account import Credentials
 import pytz
+import numpy as np
 
 st.set_page_config(page_title="Bicopack – Registro", layout="centered")
 
@@ -67,13 +68,25 @@ def _gs_client():
     creds = Credentials.from_service_account_info(info, scopes=scopes)
     return gspread.authorize(creds)
 
+# ---- SOLUCIÓN ERROR JSON SERIALIZATION ----
+def _convert_value(v):
+    if isinstance(v, np.integer):
+        return int(v)
+    if isinstance(v, np.floating):
+        return float(v)
+    if isinstance(v, (datetime, date)):
+        return v.isoformat()
+    return v
+
 def gs_append_row(worksheet_name: str, row: list):
     sheet_id = os.environ.get("GOOGLE_SHEET_ID", "")
     gc = _gs_client()
     sh = gc.open_by_key(sheet_id)
     ws = sh.worksheet(worksheet_name)
 
-    ws.append_row(row, value_input_option="RAW")
+    clean_row = [_convert_value(v) for v in row]
+
+    ws.append_row(clean_row, value_input_option="RAW")
 
 def gs_get_all(worksheet_name: str) -> pd.DataFrame:
     sheet_id = os.environ.get("GOOGLE_SHEET_ID", "")
