@@ -6,13 +6,16 @@ import os
 import json
 import gspread
 from google.oauth2.service_account import Credentials
+import pytz
 
 st.set_page_config(page_title="Bicopack – Registro", layout="centered")
+
+# Zona horaria España
+tz = pytz.timezone("Europe/Madrid")
 
 BASE_PATH = os.path.dirname(os.path.abspath(__file__))
 EN_CURSO_PATH = os.path.join(BASE_PATH, "bobinas_en_curso.csv")
 EVENTOS_PATH = os.path.join(BASE_PATH, "eventos.csv")
-
 
 # --------------------
 # CSV helpers
@@ -31,18 +34,10 @@ def save_csv(df: pd.DataFrame, path: str) -> None:
 
 
 # --------------------
-# Time helpers (manual input)
+# Time helpers
 # --------------------
 def parse_hhmm(value: str) -> time:
-    """
-    Parse time string 'HH:MM' into datetime.time.
-    Raises ValueError if invalid.
-    """
-    if value is None:
-        raise ValueError("Hora vacía.")
     s = str(value).strip()
-    if not s:
-        raise ValueError("Hora vacía.")
     try:
         dt = datetime.strptime(s, "%H:%M")
         return dt.time()
@@ -71,39 +66,37 @@ def _gs_client():
         raise RuntimeError("Falta GOOGLE_SERVICE_ACCOUNT en Render.")
 
     info = json.loads(sa_json)
+
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
     ]
+
     creds = Credentials.from_service_account_info(info, scopes=scopes)
     return gspread.authorize(creds)
 
 
 def gs_append_row(worksheet_name: str, row: list):
     sheet_id = os.environ.get("GOOGLE_SHEET_ID", "")
-    if not sheet_id:
-        raise RuntimeError("Falta GOOGLE_SHEET_ID en Render.")
     gc = _gs_client()
     sh = gc.open_by_key(sheet_id)
     ws = sh.worksheet(worksheet_name)
-    ws.append_row(row, value_input_option="USER_ENTERED")
+
+    ws.append_row(row, value_input_option="RAW")
 
 
 def gs_get_all(worksheet_name: str) -> pd.DataFrame:
     sheet_id = os.environ.get("GOOGLE_SHEET_ID", "")
-    if not sheet_id:
-        raise RuntimeError("Falta GOOGLE_SHEET_ID en Render.")
     gc = _gs_client()
     sh = gc.open_by_key(sheet_id)
     ws = sh.worksheet(worksheet_name)
+
     data = ws.get_all_records()
     return pd.DataFrame(data)
 
 
 def gs_delete_row_by_bobina(bobina_id):
     sheet_id = os.environ.get("GOOGLE_SHEET_ID", "")
-    if not sheet_id:
-        raise RuntimeError("Falta GOOGLE_SHEET_ID en Render.")
     gc = _gs_client()
     sh = gc.open_by_key(sheet_id)
     ws = sh.worksheet("EN_CURSO")
@@ -121,69 +114,130 @@ def gs_delete_row_by_bobina(bobina_id):
 # --------------------
 st.title("Bicopack – Registro de producción")
 
-tabs = st.tabs(["Inicio de bobina", "Fin de bobina", "Tareas / Incidencias"])
+tabs = st.tabs(["Panel producción", "Inicio de bobina", "Fin de bobina", "Tareas / Incidencias"])
+
+
+# =========================
+# PANEL PRODUCCIÓN EN VIVO
+# =========================
+with tabs[0]:
+
+    st.subheader("Producción en curso")
+
+    try:
+        df = gs_get_all("EN_CURSO")
+    except Exception:
+        df = pd.DataFrame()
+
+    if df.empty:
+        st.info("No hay bobinas en producción.")
+    else:
+
+        def tiempo_transcurrido(row):
+
+            try:
+                hora_inicio = parse_hhmm(row["hora_inicio"])
+                fecha_inicio = datetime.strptime(row["fecha"], "%Y-%m-%d").date()
+
+                inicio = datetime.combine(fecha_inicio, hora_inicio)
+
+                ahora = datetime.now(tz)
+
+                if ahora < inicio:
+                    ahora += timedelta(days=1)
+
+                minutos = int((ahora - inicio).total_seconds() / 60)
+
+                return f"{minutos} min"
+
+            except:
+                return "-"
+
+        df["tiempo_produciendo"] = df.apply(tiempo_transcurrido, axis=1)
+
+        mostrar = df[[
+            "maquina",
+            "lote_of",
+            "hora_inicio",
+            "operario_inicio",
+            "tiempo_produciendo"
+        ]]
+
+        mostrar.columns = [
+            "Máquina",
+            "OF",
+            "Inicio",
+            "Operario",
+            "Tiempo produciendo"
+        ]
+
+        st.dataframe(mostrar, use_container_width=True)
 
 
 # =========================
 # INICIO DE BOBINA
 # =========================
-with tabs[0]:
+with tabs[1]:
+
     st.subheader("Inicio de bobina")
 
+    if "inicio_guardado" not in st.session_state:
+        st.session_state.inicio_guardado = False
+
     with st.form("inicio_bobina"):
+
         fecha = st.date_input("Fecha", value=date.today())
+
         turno = st.selectbox("Turno", ["1 (mañana)", "2 (tarde)", "3 (noche)"])
+
         maquina = st.number_input("Número de máquina", min_value=1, step=1)
+
         lote_mp = st.text_input("Lote de materia prima")
+
         lote_of = st.text_input("Lote de orden de fabricación (OF)")
+
         operario_inicio = st.text_input("Nombre del operario")
 
-        # Hora manual (HH:MM)
         hora_inicio_txt = st.text_input(
             "Hora de inicio (HH:MM)",
-            value=datetime.now().strftime("%H:%M"),
-            help="Escribe la hora en formato HH:MM (ej: 07:05, 14:30)."
+            value=datetime.now(tz).strftime("%H:%M")
         )
 
         observaciones_inicio = st.text_area("Observaciones inicio")
 
-        guardar_inicio = st.form_submit_button("Guardar inicio")
+        guardar_inicio = st.form_submit_button(
+            "Guardar inicio",
+            disabled=st.session_state.inicio_guardado
+        )
 
-        if guardar_inicio:
-            if not lote_mp or not lote_of or not operario_inicio:
-                st.error("Faltan campos obligatorios.")
-                st.stop()
+        if guardar_inicio and not st.session_state.inicio_guardado:
 
-            # validar hora
+            st.session_state.inicio_guardado = True
+
             try:
                 hora_inicio = parse_hhmm(hora_inicio_txt)
             except ValueError as e:
                 st.error(str(e))
                 st.stop()
 
-            columnas_en_curso = [
-                "bobina_id", "fecha", "turno", "maquina",
-                "lote_materia_prima", "lote_of",
-                "hora_inicio", "operario_inicio",
-                "observaciones_inicio"
-            ]
-
-            # 1) Bloqueo: no permitir iniciar si ya hay bobina abierta en esa máquina
             try:
-                df_en_curso_check = gs_get_all("EN_CURSO")
-            except Exception as e:
-                st.warning(f"No se pudo leer EN_CURSO para validar bobinas abiertas: {e}")
-                df_en_curso_check = pd.DataFrame(columns=columnas_en_curso)
+                df_en_curso = gs_get_all("EN_CURSO")
+            except:
+                df_en_curso = pd.DataFrame()
 
-            if not df_en_curso_check.empty and "maquina" in df_en_curso_check.columns:
-                df_en_curso_check["maquina_norm"] = df_en_curso_check["maquina"].apply(lambda x: safe_int(x, default=-999))
-                if int(maquina) in df_en_curso_check["maquina_norm"].tolist():
-                    st.error("⚠️ Ya hay una bobina abierta en esta máquina. Primero debes cerrar la bobina en 'Fin de bobina'.")
+            if not df_en_curso.empty:
+
+                df_en_curso["maquina_norm"] = df_en_curso["maquina"].apply(
+                    lambda x: safe_int(x, default=-999)
+                )
+
+                if int(maquina) in df_en_curso["maquina_norm"].tolist():
+                    st.error("⚠️ Ya hay una bobina abierta en esta máquina.")
                     st.stop()
 
             bobina_id = str(uuid.uuid4())
 
-            new_row = [
+            row = [
                 bobina_id,
                 fecha.isoformat(),
                 turno,
@@ -195,229 +249,183 @@ with tabs[0]:
                 observaciones_inicio
             ]
 
-            # guardar en Google
-            try:
-                gs_append_row("EN_CURSO", new_row)
-            except Exception as e:
-                st.warning(f"No se pudo enviar a Google Sheets: {e}")
-
-            # backup CSV
-            df_backup = load_csv(EN_CURSO_PATH, columnas_en_curso)
-            df_backup = pd.concat(
-                [df_backup, pd.DataFrame([new_row], columns=columnas_en_curso)],
-                ignore_index=True
-            )
-            save_csv(df_backup, EN_CURSO_PATH)
+            gs_append_row("EN_CURSO", row)
 
             st.success("✅ Inicio registrado")
+
+            st.rerun()
 
 
 # =========================
 # FIN DE BOBINA
 # =========================
-with tabs[1]:
+with tabs[2]:
+
     st.subheader("Fin de bobina")
 
-    columnas_en_curso = [
-        "bobina_id", "fecha", "turno", "maquina",
-        "lote_materia_prima", "lote_of",
-        "hora_inicio", "operario_inicio",
-        "observaciones_inicio"
-    ]
+    if "fin_guardado" not in st.session_state:
+        st.session_state.fin_guardado = False
 
     try:
-        df_en_curso = gs_get_all("EN_CURSO")
-    except Exception:
-        df_en_curso = pd.DataFrame(columns=columnas_en_curso)
+        df = gs_get_all("EN_CURSO")
+    except:
+        df = pd.DataFrame()
 
-    if df_en_curso.empty:
-        st.info("No hay bobinas en curso.")
+    if df.empty:
+
+        st.info("No hay bobinas abiertas.")
+
     else:
-        opciones = df_en_curso.copy()
 
-        # normalizar máquina por si viene como texto
-        if "maquina" in opciones.columns:
-            opciones["maquina"] = opciones["maquina"].apply(lambda x: safe_int(x, default=x))
-
-        opciones["label"] = opciones.apply(
-            lambda r: f"Máquina {r.get('maquina','?')} – OF {r.get('lote_of','')} – inicio {r.get('hora_inicio','')}",
+        df["label"] = df.apply(
+            lambda r: f"Máquina {r['maquina']} – OF {r['lote_of']} – inicio {r['hora_inicio']}",
             axis=1
         )
 
-        seleccion = st.selectbox("Selecciona la bobina a cerrar", opciones["label"])
+        seleccion = st.selectbox("Selecciona la bobina", df["label"])
 
-        fila = opciones[opciones["label"] == seleccion].iloc[0]
+        fila = df[df["label"] == seleccion].iloc[0]
 
-        # fecha_inicio viene de EN_CURSO
-        try:
-            fecha_inicio = datetime.strptime(str(fila["fecha"]), "%Y-%m-%d").date()
-        except Exception:
-            fecha_inicio = date.today()
+        fecha_inicio = datetime.strptime(fila["fecha"], "%Y-%m-%d").date()
 
         with st.form("fin_bobina"):
-            # Hora manual (HH:MM)
+
             hora_fin_txt = st.text_input(
-                "Hora de fin (HH:MM)",
-                value=datetime.now().strftime("%H:%M"),
-                help="Escribe la hora en formato HH:MM (ej: 07:05, 14:30)."
+                "Hora fin (HH:MM)",
+                value=datetime.now(tz).strftime("%H:%M")
             )
 
-            operario_fin = st.text_input("Operario que finaliza")
-            peso = st.number_input("Peso (kg)", min_value=0.0, step=0.1)
+            operario_fin = st.text_input("Operario fin")
+
+            peso = st.number_input("Peso kg", min_value=0.0, step=0.1)
+
             taras = st.number_input("Taras", min_value=0, step=1)
-            observaciones_fin = st.text_area("Observaciones fin")
 
-            guardar_fin = st.form_submit_button("Guardar fin")
+            observaciones_fin = st.text_area("Observaciones")
 
-            if guardar_fin:
-                if not operario_fin:
-                    st.error("Debes indicar el operario.")
-                    st.stop()
+            guardar_fin = st.form_submit_button(
+                "Guardar fin",
+                disabled=st.session_state.fin_guardado
+            )
 
-                # validar hora fin
-                try:
-                    hora_fin = parse_hhmm(hora_fin_txt)
-                except ValueError as e:
-                    st.error(str(e))
-                    st.stop()
+            if guardar_fin and not st.session_state.fin_guardado:
 
-                # calcular fecha_fin automática (si pasa de medianoche)
-                try:
-                    hora_ini_obj = parse_hhmm(str(fila["hora_inicio"]))
-                except Exception:
-                    # si por algún motivo no se puede parsear la hora inicio, asumimos mismo día
-                    hora_ini_obj = None
+                st.session_state.fin_guardado = True
+
+                hora_fin = parse_hhmm(hora_fin_txt)
+
+                hora_ini = parse_hhmm(fila["hora_inicio"])
 
                 fecha_fin = fecha_inicio
-                if hora_ini_obj is not None:
-                    if datetime.combine(fecha_inicio, hora_fin) < datetime.combine(fecha_inicio, hora_ini_obj):
-                        fecha_fin = fecha_inicio + timedelta(days=1)
 
-                # ⚠️ NUEVO FORMATO BOBINAS: fecha_inicio y fecha_fin
-                # Asegúrate de tener estas columnas en Google Sheets -> pestaña BOBINAS
-                fila_bobinas = [
-                    str(fecha_inicio.isoformat()),   # fecha_inicio
-                    str(fecha_fin.isoformat()),      # fecha_fin
-                    str(fila.get("turno", "")),
-                    safe_int(fila.get("maquina", ""), default=""),
-                    str(fila.get("lote_materia_prima", "")),
-                    str(fila.get("lote_of", "")),
-                    str(fila.get("hora_inicio", "")),
-                    str(fila.get("operario_inicio", "")),
+                if datetime.combine(fecha_inicio, hora_fin) < datetime.combine(fecha_inicio, hora_ini):
+                    fecha_fin = fecha_inicio + timedelta(days=1)
+
+                row = [
+                    fecha_inicio.isoformat(),
+                    fecha_fin.isoformat(),
+                    fila["turno"],
+                    int(fila["maquina"]),
+                    fila["lote_materia_prima"],
+                    fila["lote_of"],
+                    fila["hora_inicio"],
+                    fila["operario_inicio"],
                     hora_fin.strftime("%H:%M"),
-                    str(operario_fin),
+                    operario_fin,
                     float(peso),
                     int(taras),
-                    str(observaciones_fin)
+                    observaciones_fin
                 ]
 
-                fila_bobinas = [None if pd.isna(x) else x for x in fila_bobinas]
+                gs_append_row("BOBINAS", row)
 
-                try:
-                    gs_append_row("BOBINAS", fila_bobinas)
-
-                    # eliminar de EN_CURSO en Google
-                    gs_delete_row_by_bobina(fila["bobina_id"])
-
-                except Exception as e:
-                    st.warning(f"No se pudo enviar a Google Sheets: {e}")
+                gs_delete_row_by_bobina(fila["bobina_id"])
 
                 st.success("✅ Bobina cerrada")
+
+                st.rerun()
 
 
 # =========================
 # EVENTOS
 # =========================
-with tabs[2]:
+with tabs[3]:
+
     st.subheader("Registro de tareas / incidencias")
-
-    columnas_eventos = [
-        "fecha", "turno", "maquina", "lote_of",
-        "tipo", "hora_inicio", "hora_fin",
-        "minutos", "operario", "descripcion"
-    ]
-
-    df_eventos = load_csv(EVENTOS_PATH, columnas_eventos)
 
     try:
         df_en_curso = gs_get_all("EN_CURSO")
-    except Exception:
+    except:
         df_en_curso = pd.DataFrame()
 
     with st.form("evento"):
+
         tipo = st.selectbox("Tipo", ["Incidencia", "Tarea/Limpieza"])
+
         fecha = st.date_input("Fecha", value=date.today())
+
         maquina = st.number_input("Máquina", min_value=1, step=1)
 
-        # Horas manuales
         hora_inicio_txt = st.text_input(
             "Hora inicio (HH:MM)",
-            value=datetime.now().strftime("%H:%M")
+            value=datetime.now(tz).strftime("%H:%M")
         )
+
         hora_fin_txt = st.text_input(
             "Hora fin (HH:MM)",
-            value=datetime.now().strftime("%H:%M")
+            value=datetime.now(tz).strftime("%H:%M")
         )
 
         operario = st.text_input("Operario")
+
         descripcion = st.text_area("Descripción")
 
         guardar_evento = st.form_submit_button("Guardar evento")
 
         if guardar_evento:
-            if not operario or not descripcion:
-                st.error("Faltan campos obligatorios.")
-                st.stop()
 
-            # validar horas
-            try:
-                hora_inicio = parse_hhmm(hora_inicio_txt)
-                hora_fin = parse_hhmm(hora_fin_txt)
-            except ValueError as e:
-                st.error(str(e))
-                st.stop()
+            hora_inicio = parse_hhmm(hora_inicio_txt)
+            hora_fin = parse_hhmm(hora_fin_txt)
 
             turno = ""
             lote_of = ""
 
-            if not df_en_curso.empty and "maquina" in df_en_curso.columns:
-                df_en_curso["maquina_norm"] = df_en_curso["maquina"].apply(lambda x: safe_int(x, default=-999))
-                bobina_activa = df_en_curso[df_en_curso["maquina_norm"] == int(maquina)]
-            else:
-                bobina_activa = pd.DataFrame()
+            if not df_en_curso.empty:
 
-            if not bobina_activa.empty:
-                turno = bobina_activa.iloc[0].get("turno", "")
-                lote_of = bobina_activa.iloc[0].get("lote_of", "")
+                df_en_curso["maquina_norm"] = df_en_curso["maquina"].apply(
+                    lambda x: safe_int(x, default=-999)
+                )
 
-            elif tipo == "Incidencia":
-                st.error("⚠️ No hay OF activa en esta máquina.")
-                st.stop()
+                bobina = df_en_curso[df_en_curso["maquina_norm"] == int(maquina)]
 
-            start_dt = datetime.combine(fecha, hora_inicio)
-            end_dt = datetime.combine(fecha, hora_fin)
+                if not bobina.empty:
 
-            if end_dt < start_dt:
-                end_dt += timedelta(days=1)
+                    turno = bobina.iloc[0]["turno"]
+                    lote_of = bobina.iloc[0]["lote_of"]
 
-            minutos = int((end_dt - start_dt).total_seconds() // 60)
+            start = datetime.combine(fecha, hora_inicio)
+            end = datetime.combine(fecha, hora_fin)
 
-            new_event = [
+            if end < start:
+                end += timedelta(days=1)
+
+            minutos = int((end - start).total_seconds() / 60)
+
+            row = [
                 fecha.isoformat(),
-                str(turno),
+                turno,
                 int(maquina),
-                str(lote_of),
-                str(tipo),
+                lote_of,
+                tipo,
                 hora_inicio.strftime("%H:%M"),
                 hora_fin.strftime("%H:%M"),
-                int(minutos),
-                str(operario),
-                str(descripcion)
+                minutos,
+                operario,
+                descripcion
             ]
 
-            try:
-                gs_append_row("EVENTOS", new_event)
-            except Exception as e:
-                st.warning(f"No se pudo enviar a Google Sheets: {e}")
+            gs_append_row("EVENTOS", row)
 
             st.success("✅ Evento guardado")
+
+            st.rerun()
