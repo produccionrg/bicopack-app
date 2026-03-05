@@ -360,80 +360,84 @@ with tabs[3]:
 
     st.subheader("Incidencias / Tareas")
 
+    # mantener hora fija mientras el formulario está abierto
+    if "hora_evento_inicio_default" not in st.session_state:
+        st.session_state.hora_evento_inicio_default = datetime.now(tz).strftime("%H:%M")
+
+    if "hora_evento_fin_default" not in st.session_state:
+        st.session_state.hora_evento_fin_default = datetime.now(tz).strftime("%H:%M")
+
     try:
-        df=gs_get_all("EN_CURSO")
+        df = gs_get_all("EN_CURSO")
     except:
-        df=pd.DataFrame()
+        df = pd.DataFrame()
 
     with st.form("evento"):
 
-        tipo=st.selectbox("Tipo",["Incidencia","Tarea/Limpieza"])
+        tipo = st.selectbox("Tipo", ["Incidencia", "Tarea/Limpieza"])
 
-        fecha=st.date_input("Fecha",value=date.today())
+        fecha = st.date_input("Fecha", value=date.today())
 
-        maquina=st.number_input("Máquina",min_value=1)
+        maquina = st.number_input("Máquina", min_value=1)
 
-        hora_inicio_txt=st.text_input(
-        "Hora inicio",
-        value=datetime.now(tz).strftime("%H:%M")
+        hora_inicio_txt = st.text_input(
+            "Hora inicio (HH:MM)",
+            value=st.session_state.hora_evento_inicio_default
         )
 
-        hora_fin_txt=st.text_input(
-        "Hora fin",
-        value=datetime.now(tz).strftime("%H:%M")
+        hora_fin_txt = st.text_input(
+            "Hora fin (HH:MM)",
+            value=st.session_state.hora_evento_fin_default
         )
 
-        operario=st.text_input("Operario")
+        operario = st.text_input("Operario")
 
-        descripcion=st.text_area("Descripción")
+        descripcion = st.text_area("Descripción")
 
-        guardar=st.form_submit_button("Guardar")
+        guardar = st.form_submit_button("Guardar")
 
         if guardar:
 
-            hora_inicio=parse_hhmm(hora_inicio_txt)
+            hora_inicio = parse_hhmm(hora_inicio_txt)
+            hora_fin = parse_hhmm(hora_fin_txt)
 
-            hora_fin=parse_hhmm(hora_fin_txt)
-
-            turno=""
-            lote_of=""
+            turno = ""
+            lote_of = ""
 
             if not df.empty:
 
-                df["maquina_norm"]=df["maquina"].apply(lambda x:safe_int(x,-999))
+                df["maquina_norm"] = df["maquina"].apply(lambda x: safe_int(x, -999))
 
-                bobina=df[df["maquina_norm"]==int(maquina)]
+                bobina = df[df["maquina_norm"] == int(maquina)]
 
                 if not bobina.empty:
+                    turno = bobina.iloc[0]["turno"]
+                    lote_of = bobina.iloc[0]["lote_of"]
 
-                    turno=bobina.iloc[0]["turno"]
-                    lote_of=bobina.iloc[0]["lote_of"]
+            start = datetime.combine(fecha, hora_inicio)
+            end = datetime.combine(fecha, hora_fin)
 
-            start=datetime.combine(fecha,hora_inicio)
+            if end < start:
+                end += timedelta(days=1)
 
-            end=datetime.combine(fecha,hora_fin)
+            minutos = int((end - start).total_seconds() / 60)
 
-            if end<start:
-
-                end+=timedelta(days=1)
-
-            minutos=int((end-start).total_seconds()/60)
-
-            row=[
-            fecha.isoformat(),
-            turno,
-            int(maquina),
-            lote_of,
-            tipo,
-            hora_inicio.strftime("%H:%M"),
-            hora_fin.strftime("%H:%M"),
-            minutos,
-            operario,
-            descripcion
+            row = [
+                fecha.isoformat(),
+                turno,
+                int(maquina),
+                lote_of,
+                tipo,
+                hora_inicio.strftime("%H:%M"),
+                hora_fin.strftime("%H:%M"),
+                minutos,
+                operario,
+                descripcion
             ]
 
-            gs_append_row("EVENTOS",row)
+            gs_append_row("EVENTOS", row)
 
             st.success("Evento guardado")
 
             st.rerun()
+
