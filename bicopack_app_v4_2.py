@@ -360,17 +360,17 @@ with tabs[3]:
 
     st.subheader("Incidencias / Tareas")
 
-    # mantener hora fija mientras el formulario está abierto
-    if "hora_evento_inicio_default" not in st.session_state:
-        st.session_state.hora_evento_inicio_default = datetime.now(tz).strftime("%H:%M")
+    # Inicializar horas solo una vez
+    if "hora_evento_inicio" not in st.session_state:
+        st.session_state.hora_evento_inicio = datetime.now(tz).strftime("%H:%M")
 
-    if "hora_evento_fin_default" not in st.session_state:
-        st.session_state.hora_evento_fin_default = datetime.now(tz).strftime("%H:%M")
+    if "hora_evento_fin" not in st.session_state:
+        st.session_state.hora_evento_fin = datetime.now(tz).strftime("%H:%M")
 
     try:
-        df = gs_get_all("EN_CURSO")
+        df_en_curso = gs_get_all("EN_CURSO")
     except:
-        df = pd.DataFrame()
+        df_en_curso = pd.DataFrame()
 
     with st.form("evento"):
 
@@ -378,25 +378,29 @@ with tabs[3]:
 
         fecha = st.date_input("Fecha", value=date.today())
 
-        maquina = st.number_input("Máquina", min_value=1)
+        maquina = st.number_input("Máquina", min_value=1, step=1)
 
         hora_inicio_txt = st.text_input(
             "Hora inicio (HH:MM)",
-            value=st.session_state.hora_evento_inicio_default
+            value=st.session_state.hora_evento_inicio
         )
 
         hora_fin_txt = st.text_input(
             "Hora fin (HH:MM)",
-            value=st.session_state.hora_evento_fin_default
+            value=st.session_state.hora_evento_fin
         )
 
         operario = st.text_input("Operario")
 
         descripcion = st.text_area("Descripción")
 
-        guardar = st.form_submit_button("Guardar")
+        guardar_evento = st.form_submit_button("Guardar")
 
-        if guardar:
+        if guardar_evento:
+
+            # actualizar session_state con lo que ha escrito el operario
+            st.session_state.hora_evento_inicio = hora_inicio_txt
+            st.session_state.hora_evento_fin = hora_fin_txt
 
             hora_inicio = parse_hhmm(hora_inicio_txt)
             hora_fin = parse_hhmm(hora_fin_txt)
@@ -404,11 +408,13 @@ with tabs[3]:
             turno = ""
             lote_of = ""
 
-            if not df.empty:
+            if not df_en_curso.empty:
 
-                df["maquina_norm"] = df["maquina"].apply(lambda x: safe_int(x, -999))
+                df_en_curso["maquina_norm"] = df_en_curso["maquina"].apply(
+                    lambda x: safe_int(x, -999)
+                )
 
-                bobina = df[df["maquina_norm"] == int(maquina)]
+                bobina = df_en_curso[df_en_curso["maquina_norm"] == int(maquina)]
 
                 if not bobina.empty:
                     turno = bobina.iloc[0]["turno"]
@@ -440,4 +446,3 @@ with tabs[3]:
             st.success("Evento guardado")
 
             st.rerun()
-
