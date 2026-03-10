@@ -19,7 +19,6 @@ tz = pytz.timezone("Europe/Madrid")
 def parse_hhmm(value):
     return datetime.strptime(value.strip(), "%H:%M").time()
 
-
 def safe_int(x, default=None):
     try:
         if pd.isna(x):
@@ -30,7 +29,6 @@ def safe_int(x, default=None):
             return int(str(x))
         except:
             return default
-
 
 def clean_row(row):
 
@@ -54,6 +52,7 @@ def clean_row(row):
 # Google Sheets
 # --------------------
 
+@st.cache_resource
 def _gs_client():
 
     sa_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT", "")
@@ -81,7 +80,11 @@ def gs_append_row(sheet, row):
 
     ws.append_row(row, value_input_option="RAW")
 
+    # limpiar caché para refrescar datos
+    st.cache_data.clear()
 
+
+@st.cache_data(ttl=5)
 def gs_get_all(sheet):
 
     sheet_id = os.environ.get("GOOGLE_SHEET_ID", "")
@@ -108,8 +111,9 @@ def gs_delete_row_by_bobina(bobina_id):
         if row and row[0] == str(bobina_id):
 
             ws.delete_rows(i + 1)
-
             break
+
+    st.cache_data.clear()
 
 
 # --------------------
@@ -217,10 +221,7 @@ with tabs[1]:
 
             hora_inicio = parse_hhmm(hora_inicio_txt)
 
-            try:
-                df = gs_get_all("EN_CURSO")
-            except:
-                df = pd.DataFrame()
+            df = gs_get_all("EN_CURSO")
 
             maquina_ocupada = False
             bobina_abierta = None
@@ -282,10 +283,7 @@ with tabs[2]:
 
     st.subheader("Fin bobina")
 
-    try:
-        df = gs_get_all("EN_CURSO")
-    except:
-        df = pd.DataFrame()
+    df = gs_get_all("EN_CURSO")
 
     if df.empty:
 
@@ -367,10 +365,7 @@ with tabs[3]:
 
     st.subheader("Incidencias / Tareas")
 
-    try:
-        df = gs_get_all("EN_CURSO")
-    except:
-        df = pd.DataFrame()
+    df = gs_get_all("EN_CURSO")
 
     with st.form("evento"):
 
